@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>鸡舍控制中心</title>
-    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <script src="https://unpkg.com/mqtt@5.3.4/dist/mqtt.min.js"></script>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f4f6f9; margin: 0; padding: 15px; display: flex; flex-direction: column; align-items: center; box-sizing: border-box; }
         .container { max-width: 480px; width: 100%; background: #fff; padding: 20px; border-radius: 20px; box-shadow: 0 8px 24px rgba(0,0,0,0.05); box-sizing: border-box; }
@@ -17,6 +17,8 @@
         .bg-offline { background-color: #ff3b30; color: white; }
         .bg-warning { background-color: #ffcc00; color: #1c1c1e; animation: blink 1.2s infinite; }
         .bg-waiting { background-color: #8e8e93; color: white; }
+        .bg-dark    { background-color: #5856d6; color: white; }
+        .bg-bright  { background-color: #ff9500; color: white; }
         @keyframes blink { 0%{opacity:1} 50%{opacity:0.4} 100%{opacity:1} }
         .card { border: 1px solid #edf0f2; border-radius: 16px; padding: 18px; margin-bottom: 15px; box-sizing: border-box; }
         .card-title { font-weight: 600; font-size: 15px; margin-bottom: 14px; color: #1c1c1e; }
@@ -46,22 +48,26 @@
         .modal-box input[type="text"] { width: 100%; padding: 12px; border: 1px solid #d1d1d6; border-radius: 10px; font-size: 15px; box-sizing: border-box; margin-bottom: 14px; letter-spacing: 1px; }
         .modal-box input[type="text"]:focus { outline: none; border-color: #007aff; }
         .modal-hint { font-size: 12px; color: #aaa; margin-bottom: 16px; }
+
+        .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px); background: #1c1c1e; color: #fff; padding: 10px 20px; border-radius: 20px; font-size: 14px; font-weight: 500; transition: transform 0.3s; z-index: 9999; white-space: nowrap; }
+        .toast.show { transform: translateX(-50%) translateY(0); }
     </style>
 </head>
 <body>
 
+<!-- 设备ID 绑定弹框 -->
 <div class="modal-overlay" id="modal-overlay">
     <div class="modal-box">
         <h3>绑定设备</h3>
-        <p>请输入设备的 ID，可在设备串口启动日志中查看，格式为 <strong>ESP_XXXXXX</strong></p>
+        <p>请输入设备 ID，可在 ESP8266 串口启动日志中查看，格式为 <strong>ESP_XXXXXX</strong>（大写）</p>
         <input type="text" id="modal-input" placeholder="例如：ESP_1A2B3C" maxlength="20">
-        <div class="modal-hint">绑定后将保存在本设备浏览器，下次无需重复输入</div>
+        <div class="modal-hint">绑定后保存在本浏览器，下次无需重复输入</div>
         <button class="btn btn-primary" onclick="bindDevice()">确认绑定</button>
     </div>
 </div>
 
 <div class="container">
-    <h2>鸡舍智能控制中心</h2>
+    <h2>🐔 鸡舍智能控制中心</h2>
 
     <div class="device-bar">
         <span>当前设备：<strong id="display-device-id">--</strong></span>
@@ -70,60 +76,76 @@
 
     <div id="mqtt-banner">正在连接云端服务器...</div>
 
+    <!-- 状态面板 -->
     <div class="grid-status">
         <div class="status-item">
-            <span class="status-label">核心设备状态</span>
-            <span id="dev-status" class="badge bg-waiting">等待连接...</span>
+            <span class="status-label">核心设备</span>
+            <span id="dev-status" class="badge bg-waiting">等待连接</span>
         </div>
         <div class="status-item">
-            <span class="status-label">照明灯状态</span>
+            <span class="status-label">照明灯</span>
             <span id="lamp-status" class="badge bg-waiting">未知</span>
         </div>
-        <div class="status-item" style="grid-column: span 2;">
+        <div class="status-item">
             <span class="status-label">水箱水位</span>
-            <span id="water-status" class="badge bg-waiting">等待数据...</span>
+            <span id="water-status" class="badge bg-waiting">等待数据</span>
+        </div>
+        <!-- ✅ 新增：光敏传感器状态 -->
+        <div class="status-item">
+            <span class="status-label">环境光线</span>
+            <span id="light-status" class="badge bg-waiting">未知</span>
         </div>
     </div>
 
     <div class="card">
-        <div class="card-title">智能门禁控制 (继电器2)</div>
+        <div class="card-title">🔒 智能门禁控制（继电器2）</div>
         <button class="btn btn-primary" id="btn-open" onclick="controlOpen()" disabled>点击远程开门</button>
     </div>
+
     <div class="card">
-        <div class="card-title">照明灯控制 (继电器1)</div>
+        <div class="card-title">💡 照明灯控制（继电器1）</div>
         <button id="btn-lamp" class="btn btn-success" onclick="toggleLamp()" disabled>点击开关灯</button>
     </div>
+
     <div class="card">
-        <div class="card-title">灯1 定时器开关</div>
+        <div class="card-title">⏰ 定时 + 光敏联动</div>
         <div style="margin-bottom:12px;">
             <label style="display:flex;align-items:center;font-size:14px;font-weight:500;">
-                <input type="checkbox" id="timer-enable"> 开启自动化定时
+                <input type="checkbox" id="timer-enable"> 开启自动定时（时间段内且光线暗才开灯）
             </label>
         </div>
         <div class="timer-inputs">
-            <div class="time-box"><span>开启时间</span><input type="time" id="start-time" value="15:00"></div>
-            <div class="time-box"><span>关闭时间</span><input type="time" id="end-time" value="17:30"></div>
+            <div class="time-box"><span>开始时间</span><input type="time" id="start-time" value="15:00"></div>
+            <div class="time-box"><span>结束时间</span><input type="time" id="end-time" value="17:30"></div>
         </div>
-        <button class="btn btn-primary" id="btn-timer" style="padding:10px;font-size:14px;" onclick="saveTimer()" disabled>保存配置并同步</button>
+        <button class="btn btn-primary" id="btn-timer" style="padding:10px;font-size:14px;" onclick="saveTimer()" disabled>保存并同步到设备</button>
     </div>
+
     <div class="card" style="background:#fff5f5;border-color:#ffdee0;">
-        <div class="card-title" style="color:#ff3b30;">远程固件升级 (阿里云OSS)</div>
+        <div class="card-title" style="color:#ff3b30;">🚀 远程固件升级（阿里云 OSS）</div>
         <button class="btn btn-danger" id="btn-ota" onclick="triggerOTA()" disabled>手动触发 OTA 升级</button>
     </div>
 </div>
 
+<div class="toast" id="toast"></div>
+
 <script>
-const MQTT_HOST  = 'wss://b7fea2bf.ala.asia-southeast1.emqxsl.com:8084/mqtt';
-const OFFLINE_TIMEOUT_MS = 360000;
-const STORAGE_KEY = 'esp_device_id';
+const MQTT_HOST      = 'wss://b7fea2bf.ala.asia-southeast1.emqxsl.com:8084/mqtt';
+const OFFLINE_MS     = 360000;  // 6分钟
+const STORAGE_KEY    = 'esp_device_id';
+const ALL_BTNS       = ['btn-open', 'btn-lamp', 'btn-timer', 'btn-ota'];
 
-let deviceId = '';
-let cmdTopic = '';      // ✅ 改成可变变量，不再是写死的const
-let statusTopic = '';
-let lampState = false, lastHeartbeat = 0, mqttConnected = false;
-const ALL_BTNS = ['btn-open','btn-lamp','btn-timer','btn-ota'];
+let deviceId     = '';
+let cmdTopic     = '';   // ✅ 修复：改为按设备ID动态生成，不再用共享广播topic
+let statusTopic  = '';
+let lampState    = false;
+let lastHeartbeat = 0;
+let mqttConnected = false;
+let client;
+let offlineCheckTimer;
+let toastTimer;
 
-// ── 设备ID 绑定逻辑 ─────────────────────────────────────────
+// ── 设备ID 绑定 ──────────────────────────────────────────────
 function loadDeviceId() {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
@@ -133,12 +155,16 @@ function loadDeviceId() {
         initMQTT();
     } else {
         document.getElementById('modal-overlay').style.display = 'flex';
+        setTimeout(() => document.getElementById('modal-input').focus(), 100);
     }
 }
 
 function bindDevice() {
     const val = document.getElementById('modal-input').value.trim().toUpperCase();
-    if (!val || val.length < 4) { alert('请输入有效的设备ID，格式如 ESP_1A2B3C'); return; }
+    if (!val.startsWith('ESP_') || val.length < 7) {
+        showToast('⚠️ 格式不对，应为 ESP_XXXXXX');
+        return;
+    }
     localStorage.setItem(STORAGE_KEY, val);
     deviceId = val;
     document.getElementById('modal-overlay').style.display = 'none';
@@ -152,113 +178,206 @@ function changeDevice() {
     location.reload();
 }
 
-// ── MQTT ────────────────────────────────────────────────────
-let client;
+document.getElementById('modal-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') bindDevice();
+});
 
+// ── MQTT ────────────────────────────────────────────────────
 function initMQTT() {
-    // ✅ 命令和状态Topic都按设备ID区分，不会再串台
-    cmdTopic    = 'home/esp8266/cmd/' + deviceId;
+    // ✅ 修复：命令和状态 topic 都按设备ID生成
+    cmdTopic    = 'home/esp8266/cmd/'    + deviceId;
     statusTopic = 'home/esp8266/status/' + deviceId;
 
+    if (client) { try { client.end(true); } catch(_) {} }
+
     client = mqtt.connect(MQTT_HOST, {
-        clientId: 'web_' + Math.random().toString(16).substr(2, 8),
+        clientId: 'web_' + Math.random().toString(16).slice(2, 10),
         username: 'eps8266nn',
         password: 'yu155414',
         reconnectPeriod: 3000,
-        connectTimeout: 10000
+        connectTimeout: 10000,
     });
 
     client.on('connect', () => {
         mqttConnected = true;
-        document.getElementById('mqtt-banner').textContent = 'MQTT 云端已连接 ✓';
-        document.getElementById('mqtt-banner').style.color = '#34c759';
+        setBanner('MQTT 云端已连接 ✓', '#34c759');
         setButtonsEnabled(true);
-        client.subscribe(statusTopic, err => {
-            if (!err) setTimeout(() => client.publish(cmdTopic, 'WHO_IS_ONLINE'), 500);
-        });
+        client.subscribe(statusTopic, { qos: 1 });
+        // 同时订阅所有设备状态，用于自动发现
+        client.subscribe('home/esp8266/status/+', { qos: 0 });
+        setTimeout(() => publish('WHO_IS_ONLINE'), 600);
     });
 
-    client.on('offline', () => {
+    client.on('reconnect', () => {
+        setBanner('MQTT 重连中...', '#ff9500');
+    });
+
+    client.on('close', () => {
         mqttConnected = false;
-        document.getElementById('mqtt-banner').textContent = 'MQTT 已断线，自动重连中...';
-        document.getElementById('mqtt-banner').style.color = '#ff3b30';
+        setBanner('MQTT 已断线，自动重连中...', '#ff3b30');
         setButtonsEnabled(false);
         setDeviceOffline();
     });
 
     client.on('error', err => {
-        document.getElementById('mqtt-banner').textContent = 'MQTT 连接错误: ' + err.message;
-        document.getElementById('mqtt-banner').style.color = '#ff3b30';
+        setBanner('MQTT 连接错误: ' + err.message, '#ff3b30');
     });
 
     client.on('message', (topic, message) => {
         const msg = message.toString().trim();
+
+        // 自动发现：收到任意设备上线广播
+        if (topic.startsWith('home/esp8266/status/') && msg.startsWith('ONLINE_')) {
+            const foundId = msg.replace('ONLINE_', '');
+            if (!localStorage.getItem(STORAGE_KEY) && foundId.startsWith('ESP_')) {
+                localStorage.setItem(STORAGE_KEY, foundId);
+                showToast('✅ 自动发现设备: ' + foundId);
+            }
+            // 更新在线状态
+        }
+
+        // 只处理当前绑定设备的消息
+        if (topic !== statusTopic) return;
+
         lastHeartbeat = Date.now();
+        resetOfflineWatch();
         document.getElementById('dev-status').className   = 'badge bg-online';
         document.getElementById('dev-status').textContent = '正常在线';
 
-        if (msg.startsWith('ONLINE_')) {
-            return;
-        }
-        if (msg === 'ON1') {
-            lampState = true;
-            document.getElementById('btn-lamp').textContent    = '灯1 已开启 — 点击关灯';
-            document.getElementById('lamp-status').className   = 'badge bg-online';
-            document.getElementById('lamp-status').textContent = '已开灯';
-        }
-        if (msg === 'OFF1') {
-            lampState = false;
-            document.getElementById('btn-lamp').textContent    = '灯1 已关闭 — 点击开灯';
-            document.getElementById('lamp-status').className   = 'badge bg-offline';
-            document.getElementById('lamp-status').textContent = '已关灯';
-        }
-        if (msg === 'WATER_LOW_ALARM') {
-            document.getElementById('water-status').className   = 'badge bg-warning';
-            document.getElementById('water-status').textContent = '缺水警报！';
-        }
-        if (msg === 'WATER_NORMAL') {
-            document.getElementById('water-status').className   = 'badge bg-online';
-            document.getElementById('water-status').textContent = '水位正常';
-        }
-        if (msg.startsWith('TIMER_INFO_')) {
-            const parts = msg.split('_');
-            if (parts.length >= 5) {
-                document.getElementById('timer-enable').checked = (parts[2] === '1');
-                document.getElementById('start-time').value     = parts[3];
-                document.getElementById('end-time').value       = parts[4];
-            }
-        }
-        if (msg === 'OTA_UPGRADING')       alert('设备已开始从阿里云OSS下载固件，请勿切断电源，升级完成后自动重启。');
-        if (msg === 'OTA_FAILED')          alert('OTA 升级失败，请检查阿里云OSS固件地址及Bucket读权限。');
-        if (msg === 'OTA_NO_NEW_FIRMWARE') alert('设备已是最新固件，无需升级。');
-        if (msg === 'OTA_SUCCESS')         alert('OTA 升级成功，设备即将重启！');
+        handleMessage(msg);
     });
 }
 
-// ── 工具函数 ────────────────────────────────────────────────
-function setButtonsEnabled(e) { ALL_BTNS.forEach(id => document.getElementById(id).disabled = !e); }
+function handleMessage(msg) {
+    if (msg === 'ON1') {
+        lampState = true;
+        document.getElementById('btn-lamp').textContent    = '灯1 已开启 — 点击关灯';
+        document.getElementById('lamp-status').className   = 'badge bg-online';
+        document.getElementById('lamp-status').textContent = '已开灯 💡';
+    }
+    else if (msg === 'OFF1') {
+        lampState = false;
+        document.getElementById('btn-lamp').textContent    = '灯1 已关闭 — 点击开灯';
+        document.getElementById('lamp-status').className   = 'badge bg-offline';
+        document.getElementById('lamp-status').textContent = '已关灯';
+    }
+    else if (msg === 'WATER_LOW_ALARM') {
+        document.getElementById('water-status').className   = 'badge bg-warning';
+        document.getElementById('water-status').textContent = '⚠️ 缺水警报！';
+        showToast('⚠️ 水箱缺水，请及时补水！');
+    }
+    else if (msg === 'WATER_NORMAL') {
+        document.getElementById('water-status').className   = 'badge bg-online';
+        document.getElementById('water-status').textContent = '水位正常';
+    }
+    // ✅ 新增：光敏传感器状态
+    else if (msg === 'DARK') {
+        document.getElementById('light-status').className   = 'badge bg-dark';
+        document.getElementById('light-status').textContent = '🌙 光线暗';
+    }
+    else if (msg === 'BRIGHT') {
+        document.getElementById('light-status').className   = 'badge bg-bright';
+        document.getElementById('light-status').textContent = '☀️ 光线亮';
+    }
+    // ✅ 新增：门锁触发确认
+    else if (msg === 'LOCK_TRIGGERED') {
+        showToast('🔒 门锁已触发');
+    }
+    else if (msg.startsWith('TIMER_INFO_')) {
+        const parts = msg.split('_');
+        // 格式: TIMER_INFO_<en>_<start>_<end>
+        if (parts.length >= 5) {
+            document.getElementById('timer-enable').checked = (parts[2] === '1');
+            document.getElementById('start-time').value     = parts[3];
+            document.getElementById('end-time').value       = parts[4];
+            showToast('定时器配置已同步');
+        }
+    }
+    else if (msg.startsWith('ONLINE_')) {
+        showToast('🟢 设备已上线');
+    }
+    // ✅ 修复：OTA 状态名与固件一致
+    else if (msg === 'OTA_START') {
+        showToast('🚀 开始下载固件，请勿断电...');
+        document.getElementById('btn-ota').textContent = '升级中，请勿断电...';
+        document.getElementById('btn-ota').disabled = true;
+    }
+    else if (msg === 'OTA_OK') {
+        document.getElementById('btn-ota').textContent = '手动触发 OTA 升级';
+        document.getElementById('btn-ota').disabled = false;
+        showToast('✅ OTA 升级成功，设备重启中！');
+    }
+    else if (msg === 'OTA_FAIL') {
+        document.getElementById('btn-ota').textContent = '手动触发 OTA 升级';
+        document.getElementById('btn-ota').disabled = false;
+        showToast('❌ OTA 升级失败，请检查 OSS 地址和权限');
+    }
+    else if (msg === 'OTA_NO_NEW') {
+        document.getElementById('btn-ota').disabled = false;
+        showToast('ℹ️ 已是最新固件，无需升级');
+    }
+}
+
+// ── 指令发送 ────────────────────────────────────────────────
+function publish(cmd) {
+    if (!client || !client.connected) { showToast('⚠️ 未连接，请稍候'); return; }
+    client.publish(cmdTopic, cmd, { qos: 1 });
+}
+
+function controlOpen() {
+    if (!confirm('确定触发门锁吗？')) return;
+    publish('OPEN2');
+}
+
+function toggleLamp() {
+    publish(lampState ? 'OFF1' : 'ON1');
+}
+
+function saveTimer() {
+    const e = document.getElementById('timer-enable').checked ? 1 : 0;
+    const s = document.getElementById('start-time').value;
+    const d = document.getElementById('end-time').value;
+    if (!s || !d) { showToast('⚠️ 请填写开始和结束时间'); return; }
+    publish(`SET_TIMER_${e}_${s}_${d}`);
+    showToast('定时配置已发送到设备');
+}
+
+function triggerOTA() {
+    if (!confirm('确定从阿里云 OSS 更新最新固件？\n升级期间请勿断电。')) return;
+    publish('DO_OTA_UPDATE');
+}
+
+// ── 工具 ────────────────────────────────────────────────────
+function setButtonsEnabled(enabled) {
+    ALL_BTNS.forEach(id => document.getElementById(id).disabled = !enabled);
+}
+
 function setDeviceOffline() {
     document.getElementById('dev-status').className   = 'badge bg-offline';
     document.getElementById('dev-status').textContent = '已离线';
 }
 
-setInterval(() => {
-    if (!mqttConnected || lastHeartbeat === 0) return;
-    if (Date.now() - lastHeartbeat > OFFLINE_TIMEOUT_MS) setDeviceOffline();
-}, 30000);
-
-function controlOpen() { client.publish(cmdTopic, 'OPEN2'); }
-function toggleLamp()  { client.publish(cmdTopic, lampState ? 'OFF1' : 'ON1'); }
-function saveTimer() {
-    const e = document.getElementById('timer-enable').checked ? 1 : 0;
-    const s = document.getElementById('start-time').value;
-    const d = document.getElementById('end-time').value;
-    client.publish(cmdTopic, `SET_TIMER_${e}_${s}_${d}`);
-    alert('定时配置已发送到设备！');
+function setBanner(text, color) {
+    const el = document.getElementById('mqtt-banner');
+    el.textContent = text;
+    el.style.color = color;
 }
-function triggerOTA() {
-    if (confirm('确定要让设备从阿里云OSS更新最新固件吗？升级期间请勿断电。'))
-        client.publish(cmdTopic, 'DO_OTA_UPDATE');
+
+function resetOfflineWatch() {
+    document.getElementById('dev-status').className   = 'badge bg-online';
+    document.getElementById('dev-status').textContent = '正常在线';
+    if (offlineCheckTimer) clearTimeout(offlineCheckTimer);
+    offlineCheckTimer = setTimeout(() => {
+        if (Date.now() - lastHeartbeat > OFFLINE_MS) setDeviceOffline();
+    }, OFFLINE_MS + 1000);
+}
+
+function showToast(msg) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
 }
 
 // 启动
