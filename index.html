@@ -290,7 +290,7 @@ function handleMessage(msg) {
             document.getElementById('timer-enable').checked = (parts[2] === '1');
             document.getElementById('start-time').value     = parts[3];
             document.getElementById('end-time').value       = parts[4];
-            showToast('定时器配置已同步');
+            
         }
     }
     else if (msg.startsWith('ONLINE_')) {
